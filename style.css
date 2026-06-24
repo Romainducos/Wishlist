@@ -60,7 +60,7 @@ header { margin-bottom: 24px; }
   gap: 12px;
 }
 
-header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.6px; display: flex; align-items: center; }
+header h1 { font-size: 48px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; }
 
 .header-sub {
   font-size: 13px;
@@ -71,9 +71,17 @@ header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.6px; display: 
   gap: 8px;
 }
 
-.user-email  { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.user-email  { font-size: 11px; color: var(--text3); text-align: right; margin-bottom: 6px; }
 .conn-status { font-size: 11px; color: var(--text3); }
 .conn-status.offline { color: var(--red); }
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
 
 .logout-btn {
   background: none;
@@ -85,8 +93,6 @@ header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.6px; display: 
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s;
   white-space: nowrap;
-  flex-shrink: 0;
-  margin-top: 2px;
 }
 .logout-btn:hover { border-color: var(--border-strong); color: var(--text); }
 

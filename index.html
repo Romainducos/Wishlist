@@ -46,18 +46,16 @@
     <header>
       <div class="header-row">
         <div>
-          <h1>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:7px;opacity:0.5">
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-            </svg>Wishlist
-          </h1>
+          <h1>Wishlist</h1>
           <p class="header-sub">
             Sauvegarde cloud
             <span id="conn-status" class="conn-status"></span>
           </p>
-          <p class="user-email" id="user-email"></p>
         </div>
-        <button class="logout-btn" onclick="logout()">Déconnexion</button>
+        <div class="header-right">
+          <p class="user-email" id="user-email"></p>
+          <button class="logout-btn" onclick="logout()">Déconnexion</button>
+        </div>
       </div>
     </header>
 
