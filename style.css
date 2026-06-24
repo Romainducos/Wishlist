@@ -60,7 +60,7 @@ header { margin-bottom: 24px; }
   gap: 12px;
 }
 
-header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.6px; display: flex; align-items: center; }
 
 .header-sub {
   font-size: 13px;
@@ -432,8 +432,16 @@ tbody tr.is-priority .col-name  { border-left: 2px solid var(--yellow); padding-
   padding: 28px 24px 24px;
   width: 100%; max-width: 340px;
 }
-.auth-logo  { font-size: 26px; margin-bottom: 4px; }
-.auth-title { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 20px; }
+.auth-logo {
+  width: 44px; height: 44px;
+  background: var(--surface2);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.auth-title { font-size: 26px; font-weight: 700; letter-spacing: -0.6px; margin-bottom: 4px; }
+.auth-subtitle { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
 
 .auth-tabs {
   display: flex;
