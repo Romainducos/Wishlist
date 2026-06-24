@@ -168,7 +168,7 @@ header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
-@media (max-width: 420px) { .config-grid { grid-template-columns: 1fr; } }
+/* supprimé — géré dans le bloc mobile ci-dessous */
 
 .field label {
   display: block;
@@ -209,8 +209,8 @@ header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
 }
 
 /* ── Table ───────────────────────────────────── */
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table { width: 100%; border-collapse: collapse; min-width: 400px; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 0 16px; }
+table { width: 100%; border-collapse: collapse; }
 
 thead th {
   font-size: 11px;
@@ -222,28 +222,18 @@ thead th {
   padding: 0 6px 8px 6px;
   border-bottom: 0.5px solid var(--border);
 }
-thead { padding: 0 16px; }
-table { padding: 0 16px; }
-
-.table-wrap table { padding: 0; }
-.table-wrap { padding: 0 16px; }
 
 tbody tr { border-bottom: 0.5px solid var(--border); }
 tbody tr:last-child { border-bottom: none; }
 tbody td { padding: 4px 6px; vertical-align: top; }
 
 .col-drag  { width: 22px; padding: 0 2px 0 0 !important; }
-.col-name  { min-width: 150px; }
+.col-name  { min-width: 120px; }
 .col-price { width: 80px; }
 .col-qty   { width: 52px; }
 .col-sub   { width: 80px; text-align: right; }
 .col-prio  { width: 30px; padding: 0 !important; }
 .col-check { width: 30px; padding: 0 !important; }
-
-@media (max-width: 520px) {
-  .col-qty, .col-sub { display: none; }
-  thead .col-qty, thead .col-sub { display: none; }
-}
 
 /* Cell inputs */
 .cell-input {
@@ -370,7 +360,7 @@ tbody tr.is-priority .col-name  { border-left: 2px solid var(--yellow); padding-
   gap: 10px;
   margin-bottom: 14px;
 }
-@media (max-width: 380px) { .metrics { grid-template-columns: 1fr 1fr; } }
+/* supprimé — géré dans le bloc mobile ci-dessous */
 
 .metric { background: var(--surface2); border-radius: var(--radius-sm); padding: 12px; }
 .metric-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
@@ -470,3 +460,52 @@ tbody tr.is-priority .col-name  { border-left: 2px solid var(--yellow); padding-
 
 .auth-msg         { font-size: 12px; color: var(--red); margin-top: 10px; min-height: 16px; }
 .auth-msg.success { color: var(--green); }
+
+/* ── Mobile ──────────────────────────────────── */
+@media (max-width: 600px) {
+  body { padding: 12px 10px 60px; }
+
+  /* Layout */
+  .list-section-header { padding: 12px 12px; }
+  .list-config         { padding: 12px 12px; }
+  .list-summary        { padding: 12px 12px; }
+  .table-wrap          { padding: 0 10px; }
+  .add-btn             { padding: 8px 10px 6px; }
+
+  /* Config : 1 colonne */
+  .config-grid { grid-template-columns: 1fr; }
+
+  /* Table : masquer colonnes non essentielles */
+  .col-drag, .col-qty, .col-sub { display: none; }
+  thead .col-drag, thead .col-qty, thead .col-sub { display: none; }
+  .col-price { width: 65px; }
+
+  /* Plus grande zone de tap pour check et prio */
+  .check-btn {
+    width: 24px; height: 24px;
+    margin: 5px auto 0;
+  }
+  .prio-btn { width: 32px; height: 32px; font-size: 16px; }
+
+  /* Cellules avec moins de padding */
+  tbody td { padding: 6px 4px; }
+
+  /* Inputs dans la table */
+  .cell-input { font-size: 14px; }
+  .cell-url   { font-size: 11px; }
+  .cell-note  { font-size: 10px; }
+
+  /* Métriques : 2 colonnes */
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .metric-value { font-size: 17px; }
+
+  /* Header app */
+  header h1 { font-size: 19px; }
+  .logout-btn { padding: 4px 8px; font-size: 11px; }
+
+  /* Titre liste inline edit */
+  .list-title-input { width: 150px; }
+
+  /* Bouton nouvelle liste */
+  .add-list-btn-bottom { padding: 12px; font-size: 13px; }
+}
