@@ -385,15 +385,21 @@ async function loadSharedList(shareId) {
   document.getElementById('user-email').textContent    = 'Vue partagée';
   document.querySelector('.logout-btn').style.display  = 'none';
   document.getElementById('add-list-btn').style.display = 'none';
+  renderSidebar();
 
   try {
-    const { data } = await db.from('list_shares')
+    const { data, error } = await db.from('list_shares')
       .select('list_data').eq('id', shareId).maybeSingle();
+    if (error) throw error;
     if (data?.list_data) {
       const persoTab = state.tabs.find(t => t.id !== 'cadeaux') || state.tabs[0];
       persoTab.lists = [data.list_data];
+    } else {
+      showToast('Lien de partage introuvable ou expiré.', true);
     }
-  } catch(e) {}
+  } catch(e) {
+    showToast('Erreur lors du chargement : ' + (e.message || e), true);
+  }
   renderAllLists();
 }
 
