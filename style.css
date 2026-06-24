@@ -342,15 +342,32 @@ tbody tr.is-priority .col-name  { border-left: 2px solid var(--yellow); padding-
 
 /* Add row button */
 .add-btn {
-  display: flex; align-items: center; gap: 6px;
-  background: none; border: none; cursor: pointer;
-  color: var(--text2); font-size: 13px;
-  padding: 10px 16px 6px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin: 10px 16px;
+  width: calc(100% - 32px);
+  background: transparent;
+  border: 1.5px dashed var(--border);
   border-radius: var(--radius-sm);
-  transition: color 0.12s;
+  padding: 10px 16px;
+  font-size: 13px; font-weight: 500;
+  color: var(--text3);
+  cursor: pointer;
+  transition: background 0.22s ease, border-color 0.22s ease,
+              color 0.22s ease, box-shadow 0.22s ease;
 }
-.add-btn:hover { color: var(--text); }
-.add-btn svg { flex-shrink: 0; }
+.add-btn:hover {
+  background: var(--surface2);
+  border-color: var(--border-strong);
+  border-style: solid;
+  color: var(--text);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+.add-btn:active { transform: translateY(1px); }
+.add-btn svg {
+  flex-shrink: 0;
+  transition: transform 0.22s ease;
+}
+.add-btn:hover svg { transform: rotate(90deg) scale(1.1); }
 
 /* ── List summary ────────────────────────────── */
 .list-summary {
