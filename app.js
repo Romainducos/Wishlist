@@ -38,19 +38,20 @@ function defaultState() {
   const firstId = genId();
   return {
     tabs: [
-      { id: firstId,   name: 'Perso',   lists: [defaultList('Ma wishlist')] },
-      { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+      { id: firstId,   name: 'Perso',   type: 'perso',   lists: [defaultList('Ma wishlist')] },
+      { id: 'cadeaux', name: 'Cadeaux', type: 'cadeaux', lists: [defaultList('Liste de cadeaux')] }
     ],
     activeTabId: firstId
   };
 }
 
-let state = defaultState();
+let state    = defaultState();
+let addingTab = false;
 
 // Helpers: onglet et listes actifs
 function activeTabObj() { return state.tabs.find(t => t.id === state.activeTabId) || state.tabs[0]; }
 function activeLists()  { return activeTabObj().lists; }
-function isGiftTab()    { return state.activeTabId === 'cadeaux'; }
+function isGiftTab()    { return activeTabObj().type === 'cadeaux'; }
 
 function getList(listId)        { return activeLists().find(l => l.id === listId); }
 function getRow(listId, rowId)  { return getList(listId)?.rows.find(r => r.id === rowId); }
@@ -77,6 +78,7 @@ function migrate(raw) {
   if (raw.tabs && Array.isArray(raw.tabs)) {
     const tabs = raw.tabs.map(t => ({
       id: t.id || genId(), name: t.name || 'Onglet',
+      type: t.type || (t.id === 'cadeaux' ? 'cadeaux' : 'perso'),
       lists: migrateTabData({ lists: t.lists || [] }).lists
     }));
     if (!tabs.length) return defaultState();
@@ -90,8 +92,8 @@ function migrate(raw) {
     const firstId = genId();
     return {
       tabs: [
-        { id: firstId,   name: 'Perso',   lists: migrateTabData(raw.perso).lists },
-        { id: 'cadeaux', name: 'Cadeaux', lists: raw.cadeaux
+        { id: firstId,   name: 'Perso',   type: 'perso',   lists: migrateTabData(raw.perso).lists },
+        { id: 'cadeaux', name: 'Cadeaux', type: 'cadeaux', lists: raw.cadeaux
             ? migrateTabData(raw.cadeaux).lists
             : [defaultList('Liste de cadeaux')] }
       ],
@@ -104,8 +106,8 @@ function migrate(raw) {
     const firstId = genId();
     return {
       tabs: [
-        { id: firstId,   name: 'Perso',   lists: migrateTabData(raw).lists },
-        { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+        { id: firstId,   name: 'Perso',   type: 'perso',   lists: migrateTabData(raw).lists },
+        { id: 'cadeaux', name: 'Cadeaux', type: 'cadeaux', lists: [defaultList('Liste de cadeaux')] }
       ],
       activeTabId: firstId
     };
@@ -127,8 +129,8 @@ function migrate(raw) {
     if (!list.rows.length) list.rows.push(defaultRow());
     return {
       tabs: [
-        { id: firstId,   name: 'Perso',   lists: [list] },
-        { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+        { id: firstId,   name: 'Perso',   type: 'perso',   lists: [list] },
+        { id: 'cadeaux', name: 'Cadeaux', type: 'cadeaux', lists: [defaultList('Liste de cadeaux')] }
       ],
       activeTabId: firstId
     };
@@ -142,10 +144,10 @@ function migrate(raw) {
 function renderSidebar() {
   const nav = document.getElementById('sidebar-nav');
   if (!nav) return;
-  const personalCount = state.tabs.filter(t => t.id !== 'cadeaux').length;
+  const personalCount = state.tabs.filter(t => t.type !== 'cadeaux').length;
   nav.innerHTML = state.tabs.map(tab => {
     const isActive  = tab.id === state.activeTabId;
-    const canDelete = tab.id !== 'cadeaux' && personalCount > 1;
+    const canDelete = tab.type !== 'cadeaux' && personalCount > 1;
     return `
       <div class="tab-item${isActive ? ' active' : ''}">
         <button class="nav-tab" data-tab="${tab.id}" onclick="switchTab('${tab.id}')">
@@ -159,7 +161,14 @@ function renderSidebar() {
         </span>
       </div>
     `;
-  }).join('') + `<button class="nav-tab-add" onclick="addTab()">+ Nouvel onglet</button>`;
+  }).join('') + (addingTab
+    ? `<div class="tab-type-picker">
+        <span class="tab-type-label">Type :</span>
+        <button class="tab-type-btn" onclick="createTab('perso')">Perso</button>
+        <button class="tab-type-btn" onclick="createTab('cadeaux')">Cadeaux</button>
+        <button class="tab-type-cancel" onclick="cancelAddTab()">&times;</button>
+      </div>`
+    : `<button class="nav-tab-add" onclick="addTab()">+ Nouvel onglet</button>`);
 }
 
 function switchTab(id) {
@@ -171,9 +180,26 @@ function switchTab(id) {
 }
 
 function addTab() {
-  const tab = { id: genId(), name: 'Nouvelle page', lists: [defaultList('Ma wishlist')] };
-  const cadeauxIdx = state.tabs.findIndex(t => t.id === 'cadeaux');
-  state.tabs.splice(cadeauxIdx > -1 ? cadeauxIdx : state.tabs.length, 0, tab);
+  addingTab = true;
+  renderSidebar();
+}
+
+function cancelAddTab() {
+  addingTab = false;
+  renderSidebar();
+}
+
+function createTab(type) {
+  addingTab = false;
+  const isGift = type === 'cadeaux';
+  const tab = {
+    id: genId(),
+    name: isGift ? 'Cadeaux' : 'Nouvelle page',
+    type,
+    lists: [defaultList(isGift ? 'Liste de cadeaux' : 'Ma wishlist')]
+  };
+  const firstGiftIdx = state.tabs.findIndex(t => t.type === 'cadeaux');
+  state.tabs.splice(firstGiftIdx > -1 ? firstGiftIdx : state.tabs.length, 0, tab);
   state.activeTabId = tab.id;
   save();
   renderSidebar();
@@ -466,7 +492,7 @@ function buildListSection(list) {
     </div>` : ''}
 
     <div class="list-body">
-      <div class="list-config">
+      ${isGift ? '' : `<div class="list-config">
         <div class="config-grid">
           <div class="field">
             <label>Déjà économisé</label>
@@ -485,7 +511,7 @@ function buildListSection(list) {
             </div>
           </div>
         </div>
-      </div>
+      </div>`}
 
       <div id="category-filter-${list.id}" class="category-filter"></div>
 
