@@ -513,7 +513,7 @@ function buildListSection(list) {
       <div class="list-summary">
         <div class="metrics">
           <div class="metric">
-            <div class="metric-label">Total restant</div>
+            <div class="metric-label">Total restant à payer</div>
             <div class="metric-value" id="s-total-${list.id}">0 €</div>
           </div>
           <div class="metric">
