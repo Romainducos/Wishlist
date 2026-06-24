@@ -9,9 +9,10 @@ const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 const LS_PREFIX = 'wishlist_v5_';
 
-let currentUser = null;
+let currentUser  = null;
 let searchQuery  = '';
 let readOnlyMode = false;
+let activeTab    = 'perso'; // 'perso' | 'cadeaux'
 
 // ── State factories ───────────────────────────────────────────
 
@@ -34,20 +35,62 @@ function defaultList(name = 'Ma wishlist') {
   };
 }
 
-function defaultState() { return { lists: [defaultList()] }; }
+function defaultState() {
+  return {
+    perso:   { lists: [defaultList('Ma wishlist')] },
+    cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+  };
+}
 
 let state = defaultState();
 
-function getList(listId) { return state.lists.find(l => l.id === listId); }
-function getRow(listId, rowId) { return getList(listId)?.rows.find(r => r.id === rowId); }
+// Helper: listes de l'onglet actif
+function activeLists() { return state[activeTab].lists; }
+
+function getList(listId)        { return activeLists().find(l => l.id === listId); }
+function getRow(listId, rowId)  { return getList(listId)?.rows.find(r => r.id === rowId); }
+
+function migrateTabData(tabData) {
+  if (!tabData || !tabData.lists) return { lists: [defaultList()] };
+  return {
+    lists: tabData.lists.map(l => ({
+      collapsed: false,
+      ...l,
+      rows: (l.rows || []).map(r => ({
+        category: '', targetDate: '',
+        id: r.id || genId(), checked: false, priority: false, note: '', url: '',
+        ...r
+      }))
+    }))
+  };
+}
 
 function migrate(raw) {
   if (!raw) return defaultState();
-  if (raw.rows && !raw.lists) {
+
+  // Format V2 : { perso: {...}, cadeaux: {...} }
+  if (raw.perso) {
+    return {
+      perso:   migrateTabData(raw.perso),
+      cadeaux: raw.cadeaux
+        ? migrateTabData(raw.cadeaux)
+        : { lists: [defaultList('Liste de cadeaux')] }
+    };
+  }
+
+  // Format V1 : { lists: [...] }
+  if (raw.lists) {
+    return {
+      perso:   migrateTabData(raw),
+      cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+    };
+  }
+
+  // Format très ancien : { rows: [...] }
+  if (raw.rows) {
     const list = {
       id: genId(), name: 'Ma wishlist',
-      alreadySaved: raw.alreadySaved || '',
-      monthlySavings: raw.monthlySavings || '',
+      alreadySaved: raw.alreadySaved || '', monthlySavings: raw.monthlySavings || '',
       collapsed: false,
       rows: (raw.rows || []).map(r => ({
         id: genId(), checked: false, priority: false, note: '', url: '',
@@ -56,26 +99,30 @@ function migrate(raw) {
       }))
     };
     if (!list.rows.length) list.rows.push(defaultRow());
-    return { lists: [list] };
+    return {
+      perso:   { lists: [list] },
+      cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+    };
   }
-  if (raw.lists) {
-    raw.lists = raw.lists.map(l => ({
-      collapsed: false,
-      ...l,
-      rows: (l.rows || []).map(r => ({
-        category: '', targetDate: '',
-        id: r.id || genId(), checked: false, priority: false, note: '', url: '',
-        ...r
-      }))
-    }));
-  }
-  return raw;
+
+  return defaultState();
+}
+
+// ── Tabs ──────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.nav-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tab));
+  const titles = { perso: 'Perso', cadeaux: 'Cadeaux' };
+  const titleEl = document.getElementById('page-title');
+  if (titleEl) titleEl.textContent = titles[tab] || tab;
+  renderAllLists();
 }
 
 // ── Auth ──────────────────────────────────────────────────────
 
 async function initAuth() {
-  // Share mode — no auth needed
   const shareId = new URLSearchParams(window.location.search).get('share');
   if (shareId) { await loadSharedList(shareId); return; }
 
@@ -94,8 +141,8 @@ function initConnectionStatus() {
   const update = () => {
     const el = document.getElementById('conn-status');
     if (!el) return;
-    el.textContent = navigator.onLine ? '' : '● Hors ligne';
-    el.className = 'conn-status' + (navigator.onLine ? '' : ' offline');
+    el.textContent = navigator.onLine ? '● En ligne' : '● Hors ligne';
+    el.className = 'conn-status' + (navigator.onLine ? ' online' : ' offline');
   };
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
@@ -107,14 +154,14 @@ async function onLogin(user) {
   document.getElementById('user-email').textContent = user.email;
   loadFromLocalStorage();
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
+  document.getElementById('app').style.display        = 'flex';
   renderAllLists();
   await loadFromSupabase();
 }
 
 function showAuthScreen() {
   document.getElementById('auth-screen').style.display = 'flex';
-  document.getElementById('app').style.display = 'none';
+  document.getElementById('app').style.display        = 'none';
 }
 
 let authMode = 'login';
@@ -211,14 +258,11 @@ async function shareList(listId) {
   if (!currentUser) return;
   const list = getList(listId);
   if (!list) return;
-
   try {
     const shareId = genId() + genId();
     await db.from('list_shares').upsert({
-      id: shareId,
-      user_id: currentUser.id,
-      list_id: listId,
-      list_data: list,
+      id: shareId, user_id: currentUser.id,
+      list_id: listId, list_data: list,
       updated_at: new Date().toISOString()
     });
     const url = `${location.origin}${location.pathname}?share=${shareId}`;
@@ -232,18 +276,18 @@ async function shareList(listId) {
 async function loadSharedList(shareId) {
   readOnlyMode = true;
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
-  document.getElementById('user-email').textContent = 'Vue partagée (lecture seule)';
-  document.querySelector('.logout-btn').style.display      = 'none';
-  document.querySelector('.add-list-btn-bottom').style.display = 'none';
+  document.getElementById('app').style.display         = 'flex';
+  document.getElementById('user-email').textContent    = 'Vue partagée';
+  document.querySelector('.logout-btn').style.display  = 'none';
+  document.getElementById('add-list-btn').style.display = 'none';
 
   try {
     const { data } = await db.from('list_shares')
       .select('list_data').eq('id', shareId).maybeSingle();
-    state = data?.list_data ? { lists: [data.list_data] } : defaultState();
-  } catch(e) {
-    state = defaultState();
-  }
+    if (data?.list_data) {
+      state.perso = { lists: [data.list_data] };
+    }
+  } catch(e) {}
   renderAllLists();
 }
 
@@ -273,7 +317,7 @@ function onSearch(value) {
 function renderAllLists() {
   const container = document.getElementById('lists-container');
   container.innerHTML = '';
-  state.lists.forEach(list => {
+  activeLists().forEach(list => {
     const section = buildListSection(list);
     container.appendChild(section);
     renderRowsForList(list.id);
@@ -283,6 +327,7 @@ function renderAllLists() {
 }
 
 function buildListSection(list) {
+  const isGift = activeTab === 'cadeaux';
   const section = document.createElement('div');
   section.className = 'list-section' + (list.collapsed ? ' is-collapsed' : '');
   section.dataset.listId = list.id;
@@ -296,13 +341,25 @@ function buildListSection(list) {
       <div class="list-section-actions" onclick="event.stopPropagation()">${buildListActions(list.id)}</div>
     </div>
 
+    ${isGift ? `
+    <div class="gift-share-bar">
+      <span class="gift-share-label">Partager cette liste avec tes amis</span>
+      <button class="gift-share-btn" onclick="shareList('${list.id}')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+        </svg>
+        Copier le lien
+      </button>
+    </div>` : ''}
+
     <div class="list-body">
       <div class="list-config">
         <div class="config-grid">
           <div class="field">
             <label>Déjà économisé</label>
             <div class="input-wrap">
-              <input type="number" value="${esc(list.alreadySaved || '')}" placeholder="0" min="0" step="50"
+              <input type="number" value="${esc(list.alreadySaved||'')}" placeholder="0" min="0" step="50"
                 oninput="onConfigInput('${list.id}','alreadySaved',this.value)" ${readOnlyMode ? 'disabled' : ''} />
               <span class="unit">€</span>
             </div>
@@ -310,7 +367,7 @@ function buildListSection(list) {
           <div class="field">
             <label>Épargne mensuelle</label>
             <div class="input-wrap">
-              <input type="number" value="${esc(list.monthlySavings || '')}" placeholder="500" min="0" step="50"
+              <input type="number" value="${esc(list.monthlySavings||'')}" placeholder="500" min="0" step="50"
                 oninput="onConfigInput('${list.id}','monthlySavings',this.value)" ${readOnlyMode ? 'disabled' : ''} />
               <span class="unit">€/mois</span>
             </div>
@@ -402,8 +459,9 @@ function toggleCollapse(listId) {
 // ── Lists CRUD ────────────────────────────────────────────────
 
 function addList() {
-  const newList = defaultList('Nouvelle liste');
-  state.lists.push(newList);
+  const name = activeTab === 'cadeaux' ? 'Nouvelle liste' : 'Nouvelle liste';
+  const newList = defaultList(name);
+  activeLists().push(newList);
   save();
   renderAllLists();
   setTimeout(() => renameList(newList.id), 30);
@@ -441,11 +499,10 @@ function renameList(listId) {
 }
 
 function deleteList(listId) {
-  if (state.lists.length === 1) return;
+  if (activeLists().length === 1) return;
   const section = document.querySelector(`[data-list-id="${listId}"]`);
   const actions = section?.querySelector('.list-section-actions');
   if (!actions) return;
-
   actions.innerHTML = `
     <span class="delete-confirm-label">Supprimer ?</span>
     <button class="list-action-btn danger" onclick="confirmDeleteList('${listId}')">Oui</button>
@@ -454,7 +511,7 @@ function deleteList(listId) {
 }
 
 function confirmDeleteList(listId) {
-  state.lists = state.lists.filter(l => l.id !== listId);
+  state[activeTab].lists = activeLists().filter(l => l.id !== listId);
   save();
   renderAllLists();
 }
@@ -467,15 +524,17 @@ function cancelDelete(listId) {
 
 function buildListActions(listId) {
   if (readOnlyMode) return '';
+  const showShare = activeTab !== 'cadeaux'; // cadeaux a sa propre barre de partage
   return `
-    <button class="list-action-btn" onclick="shareList('${listId}')" title="Partager la liste">
+    ${showShare ? `
+    <button class="list-action-btn" onclick="shareList('${listId}')" title="Partager">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
         <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
       </svg>
-    </button>
+    </button>` : ''}
     <button class="list-action-btn" onclick="renameList('${listId}')" title="Renommer">✎</button>
-    ${state.lists.length > 1
+    ${activeLists().length > 1
       ? `<button class="list-action-btn danger" onclick="deleteList('${listId}')" title="Supprimer">🗑</button>`
       : ''}
   `;
@@ -486,116 +545,7 @@ function onConfigInput(listId, field, value) {
   if (list) { list[field] = value; save(); recalcList(listId); }
 }
 
-// ── Categories ────────────────────────────────────────────────
-
-const activeCategoryFilter = {};
-
-function renderCategoryFilter(listId) {
-  const list      = getList(listId);
-  const container = document.getElementById(`category-filter-${listId}`);
-  if (!list || !container) return;
-
-  const cats = [...new Set(list.rows.map(r => r.category).filter(Boolean))];
-  if (!cats.length) { container.innerHTML = ''; return; }
-
-  const active = activeCategoryFilter[listId] || '';
-  container.innerHTML = `
-    <div class="category-pills">
-      <button class="category-pill${!active ? ' active' : ''}" onclick="setCategoryFilter('${listId}','')">Tout</button>
-      ${cats.map(c => `
-        <button class="category-pill${active === c ? ' active' : ''}"
-          onclick="setCategoryFilter('${listId}','${esc(c)}')">${esc(c)}</button>
-      `).join('')}
-    </div>
-  `;
-}
-
-function setCategoryFilter(listId, cat) {
-  activeCategoryFilter[listId] = cat;
-  renderRowsForList(listId);
-  renderCategoryFilter(listId);
-}
-
-// ── Archive ───────────────────────────────────────────────────
-
-function renderArchiveSection(listId) {
-  const list      = getList(listId);
-  const container = document.getElementById(`archive-${listId}`);
-  if (!list || !container) return;
-
-  const purchased = list.rows.filter(r => r.checked);
-  if (!purchased.length) { container.innerHTML = ''; return; }
-
-  const isOpen = container.dataset.open === 'true';
-  const total  = purchased.reduce((s, r) => s + (parseFloat(r.price)||0)*(parseInt(r.qty)||1), 0);
-  const totalStr = total > 0 ? ' · ' + total.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €' : '';
-
-  container.innerHTML = `
-    <div class="archive-header" onclick="toggleArchive('${listId}')">
-      <span class="archive-toggle">${isOpen ? '▼' : '▶'}</span>
-      <span class="archive-label">Achats (${purchased.length}${totalStr})</span>
-    </div>
-    ${isOpen ? `
-    <div class="archive-list">
-      ${purchased.map(r => `
-        <div class="archive-row">
-          <span class="archive-name">${esc(r.name) || '—'}</span>
-          <span class="archive-price">${r.price
-            ? (parseFloat(r.price)*(parseInt(r.qty)||1)).toLocaleString('fr-FR',{maximumFractionDigits:2}) + ' €'
-            : '—'}</span>
-          ${!readOnlyMode ? `
-          <button class="archive-restore" onclick="toggleRow('${listId}','${r.id}','checked')" title="Remettre dans la liste">↩</button>` : ''}
-        </div>
-      `).join('')}
-    </div>` : ''}
-  `;
-}
-
-function toggleArchive(listId) {
-  const c = document.getElementById(`archive-${listId}`);
-  if (!c) return;
-  c.dataset.open = c.dataset.open === 'true' ? 'false' : 'true';
-  renderArchiveSection(listId);
-}
-
-// ── Graph ─────────────────────────────────────────────────────
-
-function renderGraph(listId) {
-  const list      = getList(listId);
-  const container = document.getElementById(`graph-${listId}`);
-  if (!list || !container) return;
-
-  const monthly = parseFloat(list.monthlySavings) || 0;
-  const saved   = parseFloat(list.alreadySaved)   || 0;
-  const total   = list.rows.filter(r => !r.checked)
-    .reduce((s, r) => s + (parseFloat(r.price)||0)*(parseInt(r.qty)||1), 0);
-
-  if (!monthly || !total) { container.innerHTML = ''; return; }
-
-  const bars = Array.from({ length: 6 }, (_, i) => {
-    const m         = i + 1;
-    const projected = saved + monthly * m;
-    const pct       = Math.min(100, (projected / total) * 100);
-    return { m, pct, reached: projected >= total };
-  });
-
-  container.innerHTML = `
-    <div class="graph-title">Projection épargne (6 mois)</div>
-    <div class="graph-bars">
-      ${bars.map(b => `
-        <div class="graph-bar-wrap">
-          <div class="graph-pct">${Math.round(b.pct)}%</div>
-          <div class="graph-bar-track">
-            <div class="graph-bar-fill${b.reached ? ' reached' : ''}" style="height:${b.pct}%"></div>
-          </div>
-          <div class="graph-bar-label">M${b.m}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-// ── Row expand (note / tag / date) ───────────────────────────
+// ── Row expand ────────────────────────────────────────────────
 
 const expandedRows = new Set();
 
@@ -609,7 +559,7 @@ function isRowExpanded(row) {
   return expandedRows.has(row.id) || !!(row.note || row.category || row.targetDate);
 }
 
-// ── Rows ──────────────────────────────────────────────────────
+// ── Rows CRUD ─────────────────────────────────────────────────
 
 function addRow(listId) {
   const list = getList(listId);
@@ -671,6 +621,116 @@ function formatDate(str) {
   return new Date(str).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// ── Categories ────────────────────────────────────────────────
+
+const activeCategoryFilter = {};
+
+function renderCategoryFilter(listId) {
+  const list      = getList(listId);
+  const container = document.getElementById(`category-filter-${listId}`);
+  if (!list || !container) return;
+
+  const cats = [...new Set(list.rows.map(r => r.category).filter(Boolean))];
+  if (!cats.length) { container.innerHTML = ''; return; }
+
+  const active = activeCategoryFilter[listId] || '';
+  container.innerHTML = `
+    <div class="category-pills">
+      <button class="category-pill${!active ? ' active' : ''}" onclick="setCategoryFilter('${listId}','')">Tout</button>
+      ${cats.map(c => `
+        <button class="category-pill${active === c ? ' active' : ''}"
+          onclick="setCategoryFilter('${listId}','${esc(c)}')">${esc(c)}</button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function setCategoryFilter(listId, cat) {
+  activeCategoryFilter[listId] = cat;
+  renderRowsForList(listId);
+  renderCategoryFilter(listId);
+}
+
+// ── Archive ───────────────────────────────────────────────────
+
+function renderArchiveSection(listId) {
+  const list      = getList(listId);
+  const container = document.getElementById(`archive-${listId}`);
+  if (!list || !container) return;
+
+  const purchased = list.rows.filter(r => r.checked);
+  if (!purchased.length) { container.innerHTML = ''; return; }
+
+  const isOpen   = container.dataset.open === 'true';
+  const total    = purchased.reduce((s, r) => s + (parseFloat(r.price)||0)*(parseInt(r.qty)||1), 0);
+  const totalStr = total > 0 ? ' · ' + total.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €' : '';
+
+  container.innerHTML = `
+    <div class="archive-header" onclick="toggleArchive('${listId}')">
+      <span class="archive-toggle">${isOpen ? '▼' : '▶'}</span>
+      <span class="archive-label">Achats (${purchased.length}${totalStr})</span>
+    </div>
+    ${isOpen ? `
+    <div class="archive-list">
+      ${purchased.map(r => `
+        <div class="archive-row">
+          <span class="archive-name">${esc(r.name)||'—'}</span>
+          <span class="archive-price">${r.price
+            ? (parseFloat(r.price)*(parseInt(r.qty)||1)).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €'
+            : '—'}</span>
+          ${!readOnlyMode
+            ? `<button class="archive-restore" onclick="toggleRow('${listId}','${r.id}','checked')" title="Remettre">↩</button>`
+            : ''}
+        </div>
+      `).join('')}
+    </div>` : ''}
+  `;
+}
+
+function toggleArchive(listId) {
+  const c = document.getElementById(`archive-${listId}`);
+  if (!c) return;
+  c.dataset.open = c.dataset.open === 'true' ? 'false' : 'true';
+  renderArchiveSection(listId);
+}
+
+// ── Graph ─────────────────────────────────────────────────────
+
+function renderGraph(listId) {
+  const list      = getList(listId);
+  const container = document.getElementById(`graph-${listId}`);
+  if (!list || !container) return;
+
+  const monthly = parseFloat(list.monthlySavings) || 0;
+  const saved   = parseFloat(list.alreadySaved)   || 0;
+  const total   = list.rows.filter(r => !r.checked)
+    .reduce((s, r) => s + (parseFloat(r.price)||0)*(parseInt(r.qty)||1), 0);
+
+  if (!monthly || !total) { container.innerHTML = ''; return; }
+
+  const bars = Array.from({ length: 6 }, (_, i) => {
+    const m         = i + 1;
+    const projected = saved + monthly * m;
+    const pct       = Math.min(100, (projected / total) * 100);
+    return { m, pct, reached: projected >= total };
+  });
+
+  container.innerHTML = `
+    <div class="graph-title">Projection épargne (6 mois)</div>
+    <div class="graph-bars">
+      ${bars.map(b => `
+        <div class="graph-bar-wrap">
+          <div class="graph-pct">${Math.round(b.pct)}%</div>
+          <div class="graph-bar-track">
+            <div class="graph-bar-fill${b.reached ? ' reached' : ''}" style="height:${b.pct}%"></div>
+          </div>
+          <div class="graph-bar-label">M${b.m}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 // ── Render rows ───────────────────────────────────────────────
 
 const sortables = {};
@@ -699,6 +759,7 @@ function renderRowsForList(listId) {
   rows.forEach(r => {
     const sub    = (parseFloat(r.price)||0) * (parseInt(r.qty)||1);
     const subStr = sub > 0 ? sub.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €' : '—';
+    const expanded = isRowExpanded(r);
 
     const tr = document.createElement('tr');
     tr.dataset.id = r.id;
@@ -713,7 +774,7 @@ function renderRowsForList(listId) {
             onkeydown="handleRowEnter(event,'${listId}','${r.id}')"
             ${readOnlyMode ? 'disabled' : ''} />
           ${readOnlyMode ? '' : `
-          <button class="expand-row-btn${isRowExpanded(r) ? ' open' : ''}"
+          <button class="expand-row-btn${expanded ? ' open' : ''}"
             onclick="toggleRowExpand('${listId}','${r.id}')" title="Note / Tag / Date">···</button>
           <button class="del-row-btn" onclick="delRow('${listId}','${r.id}')" title="Supprimer">×</button>`}
         </div>
@@ -724,19 +785,19 @@ function renderRowsForList(listId) {
           <button class="open-link-btn${r.url ? ' has-url' : ''}"
             onclick="const u=getRow('${listId}','${r.id}')?.url;if(u)window.open(u,'_blank')" title="Ouvrir">↗</button>
         </div>
-        ${isRowExpanded(r) ? `
+        ${expanded ? `
         <div class="meta-row">
           <input class="cell-input cell-note" type="text" placeholder="Note…" value="${esc(r.note||'')}"
             oninput="updateRow('${listId}','${r.id}','note',this.value)"
             ${readOnlyMode ? 'disabled' : ''} />
-          <input class="cell-input cell-category" type="text" placeholder="# tag"
-            value="${esc(r.category||'')}"
+          <input class="cell-input cell-category" type="text" placeholder="# tag" value="${esc(r.category||'')}"
             oninput="updateRow('${listId}','${r.id}','category',this.value);renderCategoryFilter('${listId}')"
             ${readOnlyMode ? 'disabled' : ''} />
-          ${readOnlyMode ? (r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '') : `
-          <input class="cell-date" type="date" value="${esc(r.targetDate||'')}"
-            oninput="updateRow('${listId}','${r.id}','targetDate',this.value);renderRowsForList('${listId}')"
-            title="Date cible" />`}
+          ${readOnlyMode
+            ? (r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '')
+            : `<input class="cell-date" type="date" value="${esc(r.targetDate||'')}"
+                oninput="updateRow('${listId}','${r.id}','targetDate',this.value);renderRowsForList('${listId}')"
+                title="Date cible" />`}
         </div>` : (r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '')}
       </td>
       <td class="col-price">
@@ -770,10 +831,8 @@ function renderRowsForList(listId) {
 
   if (sortables[listId]) sortables[listId].destroy();
   sortables[listId] = Sortable.create(tbody, {
-    group:      { name: 'rows', pull: true, put: true },
-    animation:  150,
-    handle:     '.drag-handle',
-    ghostClass: 'drag-ghost',
+    group: { name: 'rows', pull: true, put: true },
+    animation: 150, handle: '.drag-handle', ghostClass: 'drag-ghost',
     onEnd(evt) {
       const fromId = evt.from.closest('[data-list-id]')?.dataset.listId;
       const toId   = evt.to.closest('[data-list-id]')?.dataset.listId;

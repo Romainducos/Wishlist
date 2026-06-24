@@ -46,43 +46,67 @@
 
 <!-- App -->
 <div id="app" style="display:none">
-  <div class="wrap">
 
-    <header>
-      <div class="header-row">
-        <div>
-          <h1>Wishlist</h1>
-          <p class="header-sub">
-            Sauvegarde cloud
-            <span id="conn-status" class="conn-status"></span>
-          </p>
-        </div>
-        <div class="header-right">
-          <p class="user-email" id="user-email"></p>
-          <button class="logout-btn" onclick="logout()">Déconnexion</button>
-        </div>
-      </div>
-    </header>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">Wishlist</div>
 
-    <div class="search-wrap">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input type="search" class="search-input" placeholder="Rechercher dans mes listes…" oninput="onSearch(this.value)" />
+    <nav class="sidebar-nav">
+      <button class="nav-tab active" data-tab="perso" onclick="switchTab('perso')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        Perso
+      </button>
+      <button class="nav-tab" data-tab="cadeaux" onclick="switchTab('cadeaux')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 12 20 22 4 22 4 12"/>
+          <rect x="2" y="7" width="20" height="5"/>
+          <line x1="12" y1="22" x2="12" y2="7"/>
+          <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/>
+          <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>
+        </svg>
+        Cadeaux
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span id="conn-status" class="conn-status"></span>
+      <p class="user-email" id="user-email"></p>
+      <button class="logout-btn" onclick="logout()">Déconnexion</button>
     </div>
+  </aside>
 
-    <div id="lists-container"></div>
+  <!-- Main content -->
+  <div class="main-content">
+    <div class="wrap">
 
-    <button class="add-list-btn-bottom" onclick="addList()">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-        <line x1="7" y1="2" x2="7" y2="12"/><line x1="2" y1="7" x2="12" y2="7"/>
-      </svg>
-      Nouvelle liste
-    </button>
+      <div class="page-header">
+        <h1 id="page-title">Perso</h1>
+      </div>
 
-    <div class="save-indicator" id="save-indicator">✓ Sauvegardé</div>
+      <div class="search-wrap">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="search" class="search-input" placeholder="Rechercher…" oninput="onSearch(this.value)" />
+      </div>
 
+      <div id="lists-container"></div>
+
+      <button id="add-list-btn" class="add-list-btn-bottom" onclick="addList()">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <line x1="7" y1="2" x2="7" y2="12"/><line x1="2" y1="7" x2="12" y2="7"/>
+        </svg>
+        Nouvelle liste
+      </button>
+
+      <div class="save-indicator" id="save-indicator">✓ Sauvegardé</div>
+
+    </div>
   </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
