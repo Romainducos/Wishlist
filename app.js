@@ -12,7 +12,6 @@ const LS_PREFIX = 'wishlist_v5_';
 let currentUser  = null;
 let searchQuery  = '';
 let readOnlyMode = false;
-let activeTab    = 'perso'; // 'perso' | 'cadeaux'
 
 // ── State factories ───────────────────────────────────────────
 
@@ -36,16 +35,22 @@ function defaultList(name = 'Ma wishlist') {
 }
 
 function defaultState() {
+  const firstId = genId();
   return {
-    perso:   { lists: [defaultList('Ma wishlist')] },
-    cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+    tabs: [
+      { id: firstId,   name: 'Perso',   lists: [defaultList('Ma wishlist')] },
+      { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+    ],
+    activeTabId: firstId
   };
 }
 
 let state = defaultState();
 
-// Helper: listes de l'onglet actif
-function activeLists() { return state[activeTab].lists; }
+// Helpers: onglet et listes actifs
+function activeTabObj() { return state.tabs.find(t => t.id === state.activeTabId) || state.tabs[0]; }
+function activeLists()  { return activeTabObj().lists; }
+function isGiftTab()    { return state.activeTabId === 'cadeaux'; }
 
 function getList(listId)        { return activeLists().find(l => l.id === listId); }
 function getRow(listId, rowId)  { return getList(listId)?.rows.find(r => r.id === rowId); }
@@ -68,26 +73,47 @@ function migrateTabData(tabData) {
 function migrate(raw) {
   if (!raw) return defaultState();
 
+  // Format V3 : { tabs: [...], activeTabId }
+  if (raw.tabs && Array.isArray(raw.tabs)) {
+    const tabs = raw.tabs.map(t => ({
+      id: t.id || genId(), name: t.name || 'Onglet',
+      lists: migrateTabData({ lists: t.lists || [] }).lists
+    }));
+    if (!tabs.length) return defaultState();
+    const activeTabId = tabs.find(t => t.id === raw.activeTabId)
+      ? raw.activeTabId : tabs[0].id;
+    return { tabs, activeTabId };
+  }
+
   // Format V2 : { perso: {...}, cadeaux: {...} }
   if (raw.perso) {
+    const firstId = genId();
     return {
-      perso:   migrateTabData(raw.perso),
-      cadeaux: raw.cadeaux
-        ? migrateTabData(raw.cadeaux)
-        : { lists: [defaultList('Liste de cadeaux')] }
+      tabs: [
+        { id: firstId,   name: 'Perso',   lists: migrateTabData(raw.perso).lists },
+        { id: 'cadeaux', name: 'Cadeaux', lists: raw.cadeaux
+            ? migrateTabData(raw.cadeaux).lists
+            : [defaultList('Liste de cadeaux')] }
+      ],
+      activeTabId: firstId
     };
   }
 
   // Format V1 : { lists: [...] }
   if (raw.lists) {
+    const firstId = genId();
     return {
-      perso:   migrateTabData(raw),
-      cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+      tabs: [
+        { id: firstId,   name: 'Perso',   lists: migrateTabData(raw).lists },
+        { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+      ],
+      activeTabId: firstId
     };
   }
 
   // Format très ancien : { rows: [...] }
   if (raw.rows) {
+    const firstId = genId();
     const list = {
       id: genId(), name: 'Ma wishlist',
       alreadySaved: raw.alreadySaved || '', monthlySavings: raw.monthlySavings || '',
@@ -100,8 +126,11 @@ function migrate(raw) {
     };
     if (!list.rows.length) list.rows.push(defaultRow());
     return {
-      perso:   { lists: [list] },
-      cadeaux: { lists: [defaultList('Liste de cadeaux')] }
+      tabs: [
+        { id: firstId,   name: 'Perso',   lists: [list] },
+        { id: 'cadeaux', name: 'Cadeaux', lists: [defaultList('Liste de cadeaux')] }
+      ],
+      activeTabId: firstId
     };
   }
 
@@ -110,14 +139,89 @@ function migrate(raw) {
 
 // ── Tabs ──────────────────────────────────────────────────────
 
-function switchTab(tab) {
-  activeTab = tab;
-  document.querySelectorAll('.nav-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.tab === tab));
-  const titles = { perso: 'Perso', cadeaux: 'Cadeaux' };
+function renderSidebar() {
+  const nav = document.getElementById('sidebar-nav');
+  if (!nav) return;
+  const personalCount = state.tabs.filter(t => t.id !== 'cadeaux').length;
+  nav.innerHTML = state.tabs.map(tab => {
+    const isActive  = tab.id === state.activeTabId;
+    const canDelete = tab.id !== 'cadeaux' && personalCount > 1;
+    return `
+      <div class="tab-item${isActive ? ' active' : ''}">
+        <button class="nav-tab" data-tab="${tab.id}" onclick="switchTab('${tab.id}')">
+          ${esc(tab.name)}
+        </button>
+        <span class="tab-actions">
+          <button class="tab-icon-btn" onclick="renameTab('${tab.id}')" title="Renommer">&#9998;</button>
+          ${canDelete
+            ? `<button class="tab-icon-btn tab-del" onclick="deleteTab('${tab.id}')" title="Supprimer">&times;</button>`
+            : ''}
+        </span>
+      </div>
+    `;
+  }).join('') + `<button class="nav-tab-add" onclick="addTab()">+ Nouvel onglet</button>`;
+}
+
+function switchTab(id) {
+  state.activeTabId = id;
+  renderSidebar();
   const titleEl = document.getElementById('page-title');
-  if (titleEl) titleEl.textContent = titles[tab] || tab;
+  if (titleEl) titleEl.textContent = activeTabObj().name;
   renderAllLists();
+}
+
+function addTab() {
+  const tab = { id: genId(), name: 'Nouvelle page', lists: [defaultList('Ma wishlist')] };
+  const cadeauxIdx = state.tabs.findIndex(t => t.id === 'cadeaux');
+  state.tabs.splice(cadeauxIdx > -1 ? cadeauxIdx : state.tabs.length, 0, tab);
+  state.activeTabId = tab.id;
+  save();
+  renderSidebar();
+  const titleEl = document.getElementById('page-title');
+  if (titleEl) titleEl.textContent = tab.name;
+  renderAllLists();
+  setTimeout(() => renameTab(tab.id), 30);
+}
+
+function deleteTab(id) {
+  if (id === 'cadeaux') return;
+  state.tabs = state.tabs.filter(t => t.id !== id);
+  if (state.activeTabId === id) state.activeTabId = state.tabs[0].id;
+  save();
+  renderSidebar();
+  const titleEl = document.getElementById('page-title');
+  if (titleEl) titleEl.textContent = activeTabObj().name;
+  renderAllLists();
+}
+
+function renameTab(id) {
+  const tabBtn = document.querySelector(`.nav-tab[data-tab="${id}"]`);
+  if (!tabBtn) return;
+  const tab = state.tabs.find(t => t.id === id);
+  if (!tab) return;
+
+  const input = document.createElement('input');
+  input.className = 'tab-rename-input';
+  input.value = tab.name;
+
+  const commit = () => {
+    const val = input.value.trim() || tab.name;
+    tab.name = val;
+    save();
+    renderSidebar();
+    const titleEl = document.getElementById('page-title');
+    if (titleEl && state.activeTabId === id) titleEl.textContent = val;
+  };
+
+  input.onblur  = commit;
+  input.onkeydown = e => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = tab.name; input.blur(); }
+  };
+
+  tabBtn.textContent = '';
+  tabBtn.appendChild(input);
+  input.focus(); input.select();
 }
 
 // ── Auth ──────────────────────────────────────────────────────
@@ -155,6 +259,7 @@ async function onLogin(user) {
   loadFromLocalStorage();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display        = 'flex';
+  renderSidebar();
   renderAllLists();
   await loadFromSupabase();
 }
@@ -285,7 +390,8 @@ async function loadSharedList(shareId) {
     const { data } = await db.from('list_shares')
       .select('list_data').eq('id', shareId).maybeSingle();
     if (data?.list_data) {
-      state.perso = { lists: [data.list_data] };
+      const persoTab = state.tabs.find(t => t.id !== 'cadeaux') || state.tabs[0];
+      persoTab.lists = [data.list_data];
     }
   } catch(e) {}
   renderAllLists();
@@ -327,7 +433,7 @@ function renderAllLists() {
 }
 
 function buildListSection(list) {
-  const isGift = activeTab === 'cadeaux';
+  const isGift = isGiftTab();
   const section = document.createElement('div');
   section.className = 'list-section' + (list.collapsed ? ' is-collapsed' : '');
   section.dataset.listId = list.id;
@@ -459,7 +565,7 @@ function toggleCollapse(listId) {
 // ── Lists CRUD ────────────────────────────────────────────────
 
 function addList() {
-  const name = activeTab === 'cadeaux' ? 'Nouvelle liste' : 'Nouvelle liste';
+  const name = 'Nouvelle liste';
   const newList = defaultList(name);
   activeLists().push(newList);
   save();
@@ -511,7 +617,7 @@ function deleteList(listId) {
 }
 
 function confirmDeleteList(listId) {
-  state[activeTab].lists = activeLists().filter(l => l.id !== listId);
+  activeTabObj().lists = activeLists().filter(l => l.id !== listId);
   save();
   renderAllLists();
 }
@@ -524,7 +630,7 @@ function cancelDelete(listId) {
 
 function buildListActions(listId) {
   if (readOnlyMode) return '';
-  const showShare = activeTab !== 'cadeaux'; // cadeaux a sa propre barre de partage
+  const showShare = !isGiftTab();
   return `
     ${showShare ? `
     <button class="list-action-btn" onclick="shareList('${listId}')" title="Partager">
