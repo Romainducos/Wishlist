@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Wishlist</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1a1a18" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Wishlist" />
+  <link rel="apple-touch-icon" href="icon.svg" />
 </head>
 <body>
 
@@ -58,6 +63,13 @@
         </div>
       </div>
     </header>
+
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="search" class="search-input" placeholder="Rechercher dans mes listes…" oninput="onSearch(this.value)" />
+    </div>
 
     <div id="lists-container"></div>
 
