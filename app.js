@@ -21,9 +21,12 @@ function defaultRow() {
   return {
     id: genId(), name: '', price: '', qty: 1, url: '',
     checked: false, priority: false, note: '',
-    category: '', targetDate: ''
+    category: '', targetDate: '',
+    image: '', imageAuto: false, prevPrice: '', priceCheckedAt: ''
   };
 }
+
+function defaultSettings() { return { theme: 'auto', view: 'list' }; }
 
 function defaultList(name = 'Ma wishlist') {
   return {
@@ -41,7 +44,8 @@ function defaultState() {
       { id: firstId,   name: 'Perso',   type: 'perso',   lists: [defaultList('Ma wishlist')] },
       { id: 'cadeaux', name: 'Cadeaux', type: 'cadeaux', lists: [defaultList('Liste de cadeaux')] }
     ],
-    activeTabId: firstId
+    activeTabId: firstId,
+    settings: defaultSettings()
   };
 }
 
@@ -63,7 +67,7 @@ function migrateTabData(tabData) {
       collapsed: false,
       ...l,
       rows: (l.rows || []).map(r => ({
-        category: '', targetDate: '',
+        category: '', targetDate: '', image: '',
         id: r.id || genId(), checked: false, priority: false, note: '', url: '',
         ...r
       }))
@@ -72,6 +76,11 @@ function migrateTabData(tabData) {
 }
 
 function migrate(raw) {
+  const settings = { ...defaultSettings(), ...(raw && raw.settings) };
+  return { ...migrateTabs(raw), settings };
+}
+
+function migrateTabs(raw) {
   if (!raw) return defaultState();
 
   // Format V3 : { tabs: [...], activeTabId }
@@ -257,6 +266,7 @@ async function initAuth() {
   if (shareId) { await loadSharedList(shareId); return; }
 
   initConnectionStatus();
+  if (isLocalDemo()) { startDemo(); return; }
   const { data: { session } } = await db.auth.getSession();
   if (session) await onLogin(session.user);
   else showAuthScreen();
@@ -285,9 +295,28 @@ async function onLogin(user) {
   loadFromLocalStorage();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display        = 'flex';
+  syncSettingsUi();
   renderSidebar();
   renderAllLists();
   await loadFromSupabase();
+}
+
+// Mode démo : uniquement sur localhost, sans compte, données dans le localStorage.
+function isLocalDemo() {
+  return ['localhost', '127.0.0.1'].includes(location.hostname) &&
+    new URLSearchParams(location.search).has('demo');
+}
+
+function startDemo() {
+  currentUser = null;
+  loadFromLocalStorage();
+  document.getElementById('user-email').textContent   = 'Mode démo (local)';
+  document.querySelector('.logout-btn').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display         = 'flex';
+  syncSettingsUi();
+  renderSidebar();
+  renderAllLists();
 }
 
 function showAuthScreen() {
@@ -360,6 +389,8 @@ async function loadFromSupabase() {
     if (data?.data) {
       state = migrate(data.data);
       saveToLocalStorage();
+      syncSettingsUi();
+      renderSidebar();
       renderAllLists();
     }
   } catch(e) { console.error('Load error:', e); }
@@ -411,6 +442,8 @@ async function loadSharedList(shareId) {
   document.getElementById('user-email').textContent    = 'Vue partagée';
   document.querySelector('.logout-btn').style.display  = 'none';
   document.getElementById('add-list-btn').style.display = 'none';
+  state.settings.view = 'grid';
+  updateViewToggle();
   renderSidebar();
 
   try {
@@ -515,6 +548,7 @@ function buildListSection(list) {
 
       <div id="category-filter-${list.id}" class="category-filter"></div>
 
+      ${isGridView() ? `<div class="card-grid" id="tbody-${list.id}"></div>` : `
       <div class="table-wrap">
         <table>
           <thead>
@@ -530,7 +564,7 @@ function buildListSection(list) {
           </thead>
           <tbody id="tbody-${list.id}"></tbody>
         </table>
-      </div>
+      </div>`}
 
       ${readOnlyMode ? '' : `
       <button class="add-btn" onclick="addRow('${list.id}')">
@@ -671,6 +705,8 @@ function buildListActions(listId) {
         <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
       </svg>
     </button>` : ''}
+    <button class="list-action-btn${refreshingLists.has(listId) ? ' is-spinning' : ''}" data-refresh="${listId}"
+      onclick="refreshListPrices('${listId}')" title="Actualiser tous les prix depuis les liens">↻</button>
     <button class="list-action-btn" onclick="renameList('${listId}')" title="Renommer">✎</button>
     ${activeLists().length > 1
       ? `<button class="list-action-btn danger" onclick="deleteList('${listId}')" title="Supprimer">🗑</button>`
@@ -708,7 +744,7 @@ function addRow(listId) {
   renderRowsForList(listId);
   recalcList(listId);
   document.getElementById(`tbody-${listId}`)
-    ?.querySelector('tr:last-child')?.querySelector('input')?.focus();
+    ?.querySelector('[data-id]:last-child')?.querySelector('input')?.focus();
 }
 
 function delRow(listId, rowId) {
@@ -746,7 +782,7 @@ function handleRowEnter(e, listId, rowId) {
     addRow(listId);
   } else {
     document.getElementById(`tbody-${listId}`)
-      ?.querySelectorAll('tr')[idx + 1]?.querySelector('input')?.focus();
+      ?.querySelectorAll('[data-id]')[idx + 1]?.querySelector('input')?.focus();
   }
 }
 
@@ -890,79 +926,14 @@ function renderRowsForList(listId) {
   tbody.innerHTML = '';
 
   if (!rows.length && searchQuery) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-search">Aucun résultat pour « ${esc(searchQuery)} »</td></tr>`;
+    const msg = `Aucun résultat pour « ${esc(searchQuery)} »`;
+    tbody.innerHTML = isGridView()
+      ? `<div class="empty-search">${msg}</div>`
+      : `<tr><td colspan="7" class="empty-search">${msg}</td></tr>`;
     return;
   }
 
-  rows.forEach(r => {
-    const sub    = (parseFloat(r.price)||0) * (parseInt(r.qty)||1);
-    const subStr = sub > 0 ? sub.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €' : '—';
-    const expanded = isRowExpanded(r);
-
-    const tr = document.createElement('tr');
-    tr.dataset.id = r.id;
-    if (r.priority) tr.classList.add('is-priority');
-
-    tr.innerHTML = `
-      <td class="col-drag">${readOnlyMode ? '' : '<span class="drag-handle">⠿</span>'}</td>
-      <td class="col-name">
-        <div class="name-row">
-          <input class="cell-input" type="text" placeholder="Ex : AirPods Pro" value="${esc(r.name)}"
-            oninput="updateRow('${listId}','${r.id}','name',this.value)"
-            onkeydown="handleRowEnter(event,'${listId}','${r.id}')"
-            ${readOnlyMode ? 'disabled' : ''} />
-          ${readOnlyMode ? '' : `
-          <button class="expand-row-btn${expanded ? ' open' : ''}"
-            onclick="toggleRowExpand('${listId}','${r.id}')" title="Note / Tag / Date">···</button>
-          <button class="del-row-btn" onclick="delRow('${listId}','${r.id}')" title="Supprimer">×</button>`}
-        </div>
-        <div class="url-row">
-          <input class="cell-input cell-url" type="url" placeholder="https://…" value="${esc(r.url||'')}"
-            oninput="updateRow('${listId}','${r.id}','url',this.value);this.nextElementSibling.classList.toggle('has-url',!!this.value)"
-            ${readOnlyMode ? 'disabled' : ''} />
-          <button class="open-link-btn${r.url ? ' has-url' : ''}"
-            onclick="const u=getRow('${listId}','${r.id}')?.url;if(u)window.open(u,'_blank')" title="Ouvrir">↗</button>
-        </div>
-        ${expanded ? `
-        <div class="meta-row">
-          <input class="cell-input cell-note" type="text" placeholder="Note…" value="${esc(r.note||'')}"
-            oninput="updateRow('${listId}','${r.id}','note',this.value)"
-            ${readOnlyMode ? 'disabled' : ''} />
-          <input class="cell-input cell-category" type="text" placeholder="# tag" value="${esc(r.category||'')}"
-            oninput="updateRow('${listId}','${r.id}','category',this.value);renderCategoryFilter('${listId}')"
-            ${readOnlyMode ? 'disabled' : ''} />
-          ${readOnlyMode
-            ? (r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '')
-            : `<input class="cell-date" type="date" value="${esc(r.targetDate||'')}"
-                oninput="updateRow('${listId}','${r.id}','targetDate',this.value);renderRowsForList('${listId}')"
-                title="Date cible" />`}
-        </div>` : (r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '')}
-      </td>
-      <td class="col-price">
-        <input class="cell-input" type="number" placeholder="0" value="${esc(r.price)}" min="0" step="1"
-          oninput="updateRow('${listId}','${r.id}','price',this.value);recalcList('${listId}')"
-          ${readOnlyMode ? 'disabled' : ''} />
-      </td>
-      <td class="col-qty">
-        <input class="cell-input" type="number" placeholder="1" value="${esc(r.qty)}" min="1" step="1"
-          oninput="updateRow('${listId}','${r.id}','qty',parseInt(this.value)||1);recalcList('${listId}')"
-          ${readOnlyMode ? 'disabled' : ''} />
-      </td>
-      <td class="col-sub"><span class="row-total">${subStr}</span></td>
-      <td class="col-prio">
-        <button class="prio-btn${r.priority ? ' is-prio' : ''}"
-          onclick="${readOnlyMode ? '' : `toggleRow('${listId}','${r.id}','priority')`}"
-          ${readOnlyMode ? 'disabled' : ''} title="Priorité">★</button>
-      </td>
-      <td class="col-check">
-        <button class="check-btn${r.checked ? ' is-checked' : ''}"
-          onclick="${readOnlyMode ? '' : `toggleRow('${listId}','${r.id}','checked')`}"
-          ${readOnlyMode ? 'disabled' : ''}
-          title="${r.checked ? 'Décocher' : 'Marquer acheté'}">${r.checked ? '✓' : ''}</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
+  rows.forEach(r => tbody.appendChild(isGridView() ? buildCardEl(listId, r) : buildRowEl(listId, r)));
 
   renderCategoryFilter(listId);
   if (readOnlyMode) return;
@@ -1054,6 +1025,469 @@ function recalcList(listId) {
 
   renderGraph(listId);
 }
+
+// ── Éléments d'un article (vue liste et vue grille) ──────────
+
+const ICON_IMG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+
+function isHttpUrl(u) {
+  try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; }
+}
+
+function siteName(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+function fmtEuro(n) {
+  return n.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €';
+}
+
+function rowSubtotal(r) { return (parseFloat(r.price) || 0) * (parseInt(r.qty) || 1); }
+
+function isGridView() { return state.settings.view === 'grid'; }
+
+function thumbHtml(listId, r, cls) {
+  const img = isHttpUrl(r.image)
+    ? `<img src="${esc(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+    : '';
+  return `
+    <button class="${cls}" tabindex="-1" onclick="onThumbClick('${listId}','${r.id}')"
+      title="${img ? 'Agrandir' : (readOnlyMode ? '' : 'Ajouter une image')}">
+      ${ICON_IMG}${img}<span class="spinner"></span>
+    </button>`;
+}
+
+function nameInputHtml(listId, r) {
+  return `<input class="cell-input" data-f="name" type="text" placeholder="Ex : AirPods Pro" value="${esc(r.name)}"
+    oninput="updateRow('${listId}','${r.id}','name',this.value)"
+    onkeydown="handleRowEnter(event,'${listId}','${r.id}')"
+    ${readOnlyMode ? 'disabled' : ''} />`;
+}
+
+function priceInputHtml(listId, r) {
+  return `<input class="cell-input" data-f="price" type="number" placeholder="0" value="${esc(r.price)}" min="0" step="1"
+    oninput="onPriceInput('${listId}','${r.id}',this.value)"
+    ${readOnlyMode ? 'disabled' : ''} />`;
+}
+
+function urlRowHtml(listId, r) {
+  const has = r.url ? ' has-url' : '';
+  return `
+    <div class="url-row">
+      <input class="cell-input cell-url" data-f="url" type="url" placeholder="https://… (prix et image auto)" value="${esc(r.url || '')}"
+        oninput="onUrlInput('${listId}','${r.id}',this)"
+        onchange="onUrlCommit('${listId}','${r.id}')"
+        onpaste="setTimeout(() => onUrlCommit('${listId}','${r.id}'), 0)"
+        ${readOnlyMode ? 'disabled' : ''} />
+      ${readOnlyMode ? '' : `<button class="fetch-btn${has}" onclick="fetchRowInfo('${listId}','${r.id}')"
+        title="Récupérer le prix et l'image depuis le lien">↻</button>`}
+      <button class="open-link-btn${has}" onclick="openRowLink('${listId}','${r.id}')" title="Ouvrir">↗</button>
+    </div>`;
+}
+
+function deltaHtml(listId, r) {
+  const prev = parseFloat(r.prevPrice), cur = parseFloat(r.price);
+  if (readOnlyMode || !(prev > 0) || !(cur >= 0) || prev === cur) return '';
+  const down = cur < prev;
+  return `<button class="price-delta ${down ? 'down' : 'up'}" onclick="dismissDelta('${listId}','${r.id}')"
+    title="Avant : ${fmtEuro(prev)} (cliquer pour masquer)">${down ? '↓' : '↑'} ${fmtEuro(Math.abs(cur - prev))}</button>`;
+}
+
+function buildRowEl(listId, r) {
+  const sub      = rowSubtotal(r);
+  const expanded = isRowExpanded(r);
+  const dis      = readOnlyMode ? 'disabled' : '';
+  const dateBadge = r.targetDate ? `<div class="target-date-badge">📅 ${formatDate(r.targetDate)}</div>` : '';
+
+  const tr = document.createElement('tr');
+  tr.dataset.id = r.id;
+  if (r.priority) tr.classList.add('is-priority');
+  if (fetchingRows.has(r.id)) tr.classList.add('is-fetching');
+
+  tr.innerHTML = `
+    <td class="col-drag">${readOnlyMode ? '' : '<span class="drag-handle">⠿</span>'}</td>
+    <td class="col-name">
+      <div class="item-main">
+        ${thumbHtml(listId, r, 'thumb')}
+        <div class="item-fields">
+          <div class="name-row">
+            ${nameInputHtml(listId, r)}
+            ${readOnlyMode ? '' : `
+            <button class="expand-row-btn${expanded ? ' open' : ''}"
+              onclick="toggleRowExpand('${listId}','${r.id}')" title="Note / Tag / Date / Image">···</button>
+            <button class="del-row-btn" onclick="delRow('${listId}','${r.id}')" title="Supprimer">×</button>`}
+          </div>
+          ${urlRowHtml(listId, r)}
+          ${expanded ? `
+          <div class="meta-row">
+            <input class="cell-input cell-note" data-f="note" type="text" placeholder="Note…" value="${esc(r.note || '')}"
+              oninput="updateRow('${listId}','${r.id}','note',this.value)" ${dis} />
+            <input class="cell-input cell-category" data-f="category" type="text" placeholder="# tag" value="${esc(r.category || '')}"
+              oninput="updateRow('${listId}','${r.id}','category',this.value);renderCategoryFilter('${listId}')" ${dis} />
+            ${readOnlyMode ? dateBadge : `
+            <input class="cell-date" data-f="targetDate" type="date" value="${esc(r.targetDate || '')}"
+              oninput="updateRow('${listId}','${r.id}','targetDate',this.value);renderRowsForList('${listId}')"
+              title="Date cible" />`}
+          </div>
+          ${readOnlyMode ? '' : `
+          <div class="meta-row">
+            <input class="cell-input cell-note" data-f="image" type="url" placeholder="URL de l'image…" value="${esc(r.image || '')}"
+              onchange="onImageInput('${listId}','${r.id}',this.value)" />
+          </div>`}` : dateBadge}
+        </div>
+      </div>
+    </td>
+    <td class="col-price">${priceInputHtml(listId, r)}${deltaHtml(listId, r)}</td>
+    <td class="col-qty">
+      <input class="cell-input" data-f="qty" type="number" placeholder="1" value="${esc(r.qty)}" min="1" step="1"
+        oninput="onQtyInput('${listId}','${r.id}',this.value)" ${dis} />
+    </td>
+    <td class="col-sub"><span class="row-total">${sub > 0 ? fmtEuro(sub) : '—'}</span></td>
+    <td class="col-prio">
+      <button class="prio-btn${r.priority ? ' is-prio' : ''}"
+        onclick="${readOnlyMode ? '' : `toggleRow('${listId}','${r.id}','priority')`}" ${dis} title="Priorité">★</button>
+    </td>
+    <td class="col-check">
+      <button class="check-btn"
+        onclick="${readOnlyMode ? '' : `toggleRow('${listId}','${r.id}','checked')`}" ${dis} title="Marquer acheté"></button>
+    </td>
+  `;
+  return tr;
+}
+
+function buildCardEl(listId, r) {
+  const qty  = parseInt(r.qty) || 1;
+  const host = isHttpUrl(r.url) ? siteName(r.url) : '';
+  const price = parseFloat(r.price);
+
+  const el = document.createElement('div');
+  el.className = 'card' + (r.priority ? ' is-priority' : '') + (fetchingRows.has(r.id) ? ' is-fetching' : '');
+  el.dataset.id = r.id;
+
+  el.innerHTML = `
+    <div class="card-media">
+      ${thumbHtml(listId, r, 'card-img')}
+      ${readOnlyMode
+        ? (r.priority ? '<span class="card-star">★</span>' : '')
+        : `<span class="drag-handle">⠿</span>
+           <button class="prio-btn${r.priority ? ' is-prio' : ''}"
+             onclick="toggleRow('${listId}','${r.id}','priority')" title="Priorité">★</button>`}
+    </div>
+    <div class="card-body">
+      ${readOnlyMode
+        ? `<div class="card-name">${esc(r.name) || '—'}</div>`
+        : nameInputHtml(listId, r)}
+      <div class="card-price-row">
+        ${readOnlyMode
+          ? `<span class="card-price">${price >= 0 ? fmtEuro(price) : '—'}</span>`
+          : `<span class="card-price-edit">${priceInputHtml(listId, r)}<span class="unit">€</span></span>`}
+        ${qty > 1 ? `<span class="card-qty">× ${qty}</span>` : ''}
+        ${deltaHtml(listId, r)}
+      </div>
+      ${readOnlyMode
+        ? (host ? `<a class="card-site" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(host)} ↗</a>` : '')
+        : urlRowHtml(listId, r)}
+      ${r.note ? `<div class="card-note">${esc(r.note)}</div>` : ''}
+      ${readOnlyMode ? '' : `
+      <div class="card-foot">
+        <button class="card-buy" onclick="toggleRow('${listId}','${r.id}','checked')">✓ Acheté</button>
+        <button class="del-row-btn" onclick="delRow('${listId}','${r.id}')" title="Supprimer">×</button>
+      </div>`}
+    </div>
+  `;
+  return el;
+}
+
+// Re-rend une liste sans faire perdre le focus au champ en cours de saisie.
+function rerenderList(listId) {
+  const a = document.activeElement;
+  const host = a?.dataset?.f ? a.closest('[data-id]') : null;
+  const key = host && { id: host.dataset.id, f: a.dataset.f, s: a.selectionStart, e: a.selectionEnd };
+
+  renderRowsForList(listId);
+  recalcList(listId);
+
+  if (!key) return;
+  const el = document.querySelector(`[data-id="${key.id}"] [data-f="${key.f}"]`);
+  if (!el) return;
+  el.focus();
+  try { el.setSelectionRange(key.s, key.e); } catch { /* champs number : pas de sélection */ }
+}
+
+function refreshRowTotal(listId, rowId) {
+  const row = getRow(listId, rowId);
+  const el  = document.querySelector(`[data-id="${rowId}"] .row-total`);
+  if (!row || !el) return;
+  const sub = rowSubtotal(row);
+  el.textContent = sub > 0 ? fmtEuro(sub) : '—';
+}
+
+function onPriceInput(listId, rowId, value) {
+  const row = getRow(listId, rowId);
+  if (!row) return;
+  row.price = value;
+  row.prevPrice = '';   // prix saisi à la main : l'écart affiché n'a plus de sens
+  save();
+  document.querySelector(`[data-id="${rowId}"] .price-delta`)?.remove();
+  refreshRowTotal(listId, rowId);
+  recalcList(listId);
+}
+
+function onQtyInput(listId, rowId, value) {
+  updateRow(listId, rowId, 'qty', parseInt(value) || 1);
+  refreshRowTotal(listId, rowId);
+  recalcList(listId);
+}
+
+function dismissDelta(listId, rowId) {
+  if (readOnlyMode) return;
+  updateRow(listId, rowId, 'prevPrice', '');
+  document.querySelector(`[data-id="${rowId}"] .price-delta`)?.remove();
+}
+
+function onImageInput(listId, rowId, value) {
+  const row = getRow(listId, rowId);
+  if (!row) return;
+  row.image = value.trim();
+  row.imageAuto = false;
+  save();
+  rerenderList(listId);
+}
+
+function openRowLink(listId, rowId) {
+  const u = getRow(listId, rowId)?.url;
+  if (isHttpUrl(u)) window.open(u, '_blank', 'noopener');
+}
+
+function onThumbClick(listId, rowId) {
+  const row = getRow(listId, rowId);
+  if (!row) return;
+  if (isHttpUrl(row.image)) { openLightbox(row.image); return; }
+  if (readOnlyMode) return;
+  if (isGridView()) {
+    const url = prompt("URL de l'image :", '');
+    if (url) onImageInput(listId, rowId, url);
+    return;
+  }
+  expandedRows.add(rowId);
+  renderRowsForList(listId);
+  document.querySelector(`[data-id="${rowId}"] [data-f="image"]`)?.focus();
+}
+
+function openLightbox(src) {
+  let lb = document.getElementById('lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.className = 'lightbox';
+    lb.onclick = () => lb.classList.remove('show');
+    document.body.appendChild(lb);
+  }
+  lb.innerHTML = `<img src="${esc(src)}" alt="" referrerpolicy="no-referrer" />`;
+  lb.classList.add('show');
+}
+
+// ── Prix / image depuis le lien ───────────────────────────────
+
+const fetchingRows    = new Set();   // articles en cours de récupération
+const refreshingLists = new Set();   // listes en cours d'actualisation
+const autoFetched     = {};          // rowId → dernier lien tenté automatiquement
+
+async function scrapeUrl(url) {
+  const headers = {};
+  const { data } = await db.auth.getSession();
+  if (data?.session) headers.Authorization = 'Bearer ' + data.session.access_token;
+
+  let res;
+  try { res = await fetch('/api/scrape?url=' + encodeURIComponent(url), { headers }); }
+  catch { throw new Error('Pas de connexion.'); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `Récupération impossible (${res.status}).`);
+  return json;
+}
+
+// Reporte le résultat du scraper sur l'article. Le nom n'est jamais écrasé,
+// l'image seulement si elle n'a pas été choisie à la main.
+function applyScrape(row, info) {
+  const out = { price: false, delta: 0 };
+  if (info.title && !row.name) row.name = info.title;
+  if (info.image && (!row.image || row.imageAuto)) { row.image = info.image; row.imageAuto = true; }
+  if (info.price != null) {
+    const old = parseFloat(row.price);
+    if (old > 0 && old !== info.price) { row.prevPrice = old; out.delta = info.price - old; }
+    row.price = String(info.price);
+    row.priceCheckedAt = new Date().toISOString();
+    out.price = true;
+  }
+  return out;
+}
+
+function listOfRow(row) { return activeLists().find(l => l.rows.includes(row)); }
+
+async function fetchRowInfo(listId, rowId, { silent = false } = {}) {
+  const row = getRow(listId, rowId);
+  if (readOnlyMode || !row || fetchingRows.has(rowId)) return null;
+  if (!isHttpUrl(row.url)) { if (!silent) showToast('Lien invalide.', true); return null; }
+
+  fetchingRows.add(rowId);
+  document.querySelector(`[data-id="${rowId}"]`)?.classList.add('is-fetching');
+
+  let result;
+  try {
+    const info = await scrapeUrl(row.url);
+    result = applyScrape(row, info);
+    save();
+    if (!silent) {
+      if (!result.price) showToast('Prix introuvable sur cette page, à saisir à la main.', true);
+      else if (info.currency && info.currency !== 'EUR') showToast(`Attention : prix en ${info.currency}.`, true);
+      else if (info.guess) showToast('Prix récupéré, à vérifier.');
+      else showToast('Prix récupéré.');
+    }
+  } catch (e) {
+    result = { error: e.message };
+    if (!silent) showToast(e.message, true);
+  } finally {
+    fetchingRows.delete(rowId);
+    const list = listOfRow(row);   // l'article a pu changer de liste entre-temps
+    if (list) rerenderList(list.id);
+  }
+  return result;
+}
+
+function onUrlInput(listId, rowId, input) {
+  updateRow(listId, rowId, 'url', input.value.trim());
+  input.parentElement.querySelectorAll('.fetch-btn, .open-link-btn')
+    .forEach(b => b.classList.toggle('has-url', !!input.value.trim()));
+}
+
+// Lien collé ou validé : on complète tout seul ce qui manque.
+function onUrlCommit(listId, rowId) {
+  const row = getRow(listId, rowId);
+  if (!row || !isHttpUrl(row.url) || autoFetched[rowId] === row.url) return;
+  if (row.name && row.price && row.image) return;
+  autoFetched[rowId] = row.url;
+  fetchRowInfo(listId, rowId);
+}
+
+async function refreshListPrices(listId) {
+  const list = getList(listId);
+  if (!list || readOnlyMode || refreshingLists.has(listId)) return;
+  const rows = list.rows.filter(r => !r.checked && isHttpUrl(r.url));
+  if (!rows.length) { showToast('Aucun article avec un lien dans cette liste.', true); return; }
+
+  refreshingLists.add(listId);
+  document.querySelector(`[data-refresh="${listId}"]`)?.classList.add('is-spinning');
+
+  const stats = { ok: 0, down: 0, up: 0, fail: 0 };
+  const queue = [...rows];
+  const worker = async () => {
+    for (let row; (row = queue.shift()); ) {
+      const res = await fetchRowInfo(listId, row.id, { silent: true });
+      if (!res || res.error || !res.price) stats.fail++;
+      else { stats.ok++; if (res.delta < 0) stats.down++; else if (res.delta > 0) stats.up++; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+
+  refreshingLists.delete(listId);
+  document.querySelector(`[data-refresh="${listId}"]`)?.classList.remove('is-spinning');
+
+  const parts = [`${stats.ok} prix à jour`];
+  if (stats.down) parts.push(`${stats.down} en baisse`);
+  if (stats.up)   parts.push(`${stats.up} en hausse`);
+  if (stats.fail) parts.push(`${stats.fail} en échec`);
+  showToast(parts.join(' · '), stats.ok === 0);
+}
+
+// ── Vue liste / grille ────────────────────────────────────────
+
+function setView(view) {
+  state.settings.view = view === 'grid' ? 'grid' : 'list';
+  save();
+  updateViewToggle();
+  renderAllLists();
+}
+
+function updateViewToggle() {
+  document.querySelectorAll('.view-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === state.settings.view));
+}
+
+// ── Thèmes ────────────────────────────────────────────────────
+
+const THEME_KEY = 'wishlist_theme';
+const THEMES = [
+  { id: 'auto',    name: 'Auto',    sw: ['#f9f9f8', '#1a1a18'] },
+  { id: 'light',   name: 'Clair',   sw: ['#f9f9f8', '#1D9E75'] },
+  { id: 'dark',    name: 'Sombre',  sw: ['#1a1a18', '#5DCAA5'] },
+  { id: 'ocean',   name: 'Océan',   sw: ['#0b1622', '#4cc2ff'] },
+  { id: 'forest',  name: 'Forêt',   sw: ['#0f1a14', '#8fd36a'] },
+  { id: 'nord',    name: 'Nord',    sw: ['#2e3440', '#88c0d0'] },
+  { id: 'sunset',  name: 'Sunset',  sw: ['#fff6ee', '#e8543c'] },
+  { id: 'lavande', name: 'Lavande', sw: ['#f6f3ff', '#7c4dff'] },
+  { id: 'sakura',  name: 'Sakura',  sw: ['#fff5f7', '#e0457b'] }
+];
+
+function storedTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; }
+}
+
+function applyTheme(id) {
+  if (!THEMES.some(t => t.id === id)) id = 'auto';
+  const resolved = id === 'auto'
+    ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : id;
+  document.documentElement.dataset.theme = resolved;
+  try { localStorage.setItem(THEME_KEY, id); } catch { /* navigation privée */ }
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
+}
+
+function setTheme(id) {
+  state.settings.theme = id;
+  applyTheme(id);
+  save();
+  renderThemePop();
+}
+
+function renderThemePop() {
+  const pop = document.getElementById('theme-pop');
+  if (!pop) return;
+  const current = storedTheme();
+  pop.innerHTML = THEMES.map(t => `
+    <button class="theme-opt${t.id === current ? ' active' : ''}" onclick="setTheme('${t.id}')">
+      <span class="theme-swatch" style="background:linear-gradient(135deg, ${t.sw[0]} 50%, ${t.sw[1]} 50%)"></span>
+      ${t.name}
+    </button>`).join('');
+}
+
+function toggleThemePop(e) {
+  e?.stopPropagation();
+  const pop = document.getElementById('theme-pop');
+  if (!pop) return;
+  renderThemePop();
+  pop.classList.toggle('show');
+}
+
+// Le thème et la vue viennent du compte une fois les données chargées.
+function syncSettingsUi() {
+  applyTheme(state.settings.theme);
+  updateViewToggle();
+}
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (storedTheme() === 'auto') applyTheme('auto');
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#theme-pop')) document.getElementById('theme-pop')?.classList.remove('show');
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  document.getElementById('lightbox')?.classList.remove('show');
+  document.getElementById('theme-pop')?.classList.remove('show');
+});
 
 // ── PWA ───────────────────────────────────────────────────────
 
